@@ -1,4 +1,7 @@
 #! /usr/bin/env python
+'''
+Remotely execute processes from files
+'''
 
 import sys
 import time
@@ -7,19 +10,31 @@ import subprocess
 import watchdog.observers
 import watchdog.events
 
+IGNORE = [
+    r'.*/\..*',
+    r'.*/\d+.*',
+]
 
 class EventHandler(watchdog.events.RegexMatchingEventHandler):
+    '''
+    Handle events
+    '''
+
     def __init__(self):
-        ignore = [
-            '.*/\..*',
-            '.*/\d+.*',
-        ]
-        super(EventHandler, self).__init__(ignore_regexes=ignore,
+        '''
+        Initialise event handler
+        '''
+
+        super(EventHandler, self).__init__(ignore_regexes=IGNORE,
                                            ignore_directories=True)
         self.processes = {}
 
 
     def on_modified(self, event):
+        '''
+        Run process from file change
+        '''
+
         if not event.src_path in self.processes:
             print "Starting %s" % event.src_path
             proc = subprocess.Popen(event.src_path, shell=True)
@@ -27,8 +42,13 @@ class EventHandler(watchdog.events.RegexMatchingEventHandler):
 
 
 def main():
+    '''
+    Main loop
+    '''
+
     # Parse arguments
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     epilog=":set bkc=yes on Windows")
     parser.add_argument('path')
     args = parser.parse_args()
 
@@ -44,12 +64,15 @@ def main():
             print "Running %d processes" % len(handler.processes)
 
             # Kill processes
-            with open('kill') as fhl:
-                for line in fhl:
-                    process = line.strip()
-                    if process in handler.processes:
-                        print "Killing %s" % process
-                        handler.processes[process].kill()
+            try:
+                with open('kill') as fhl:
+                    for line in fhl:
+                        process = line.strip()
+                        if process in handler.processes:
+                            print "Killing %s" % process
+                            handler.processes[process].kill()
+            except IOError:
+                pass
 
             # Clean up processes
             toremove = []
