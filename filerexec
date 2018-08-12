@@ -3,80 +3,64 @@
 Remotely execute processes from files
 '''
 
-# FIXME Frequent writes
-
+import os
 import sys
 import time
 import argparse
 import subprocess
+import copy
+import yaml
 import watchdog.observers
 import watchdog.events
 
-KILL = [
-    r'.*kill$',
-]
-
-IGNORE = [
-    r'.*/\..*',
-    r'.*/\d+.*',
-]
-
-class StartEventHandler(watchdog.events.RegexMatchingEventHandler):
+class EventHandler(watchdog.events.PatternMatchingEventHandler):
     '''
     Handle events
     '''
 
-    def __init__(self):
+    def __init__(self, path, jobs, procs):
         '''
         Initialise event handler
         '''
 
-        super(StartEventHandler, self).__init__(ignore_regexes=IGNORE,
-                                                ignore_directories=True)
-        self.processes = {}
-
-
-    def on_modified(self, event):
-        '''
-        Run process from file change
-        '''
-
-        if not event.src_path in self.processes:
-            print "Starting %s" % event.src_path
-            proc = subprocess.Popen(event.src_path, shell=True)
-            self.processes[event.src_path] = proc
-
-
-class KillEventHandler(watchdog.events.RegexMatchingEventHandler):
-    '''
-    Handle events
-    '''
-
-    def __init__(self, path, starthandler):
-        '''
-        Initialise event handler
-        '''
-
-        super(KillEventHandler, self).__init__(regexes=KILL,
-                                               ignore_directories=True)
+        super(EventHandler, self).__init__(patterns=[path],
+                                           ignore_directories=True)
         self.path = path
-        self.starthandler = starthandler
+        self.jobs = jobs
+        self.procs = procs
 
 
     def on_modified(self, event):
         '''
-        Kill process from file change
+        Manage jobs from file change
         '''
 
-        try:
-            with open('%s/kill' % self.path) as fhl:
-                for line in fhl:
-                    process = line.strip()
-                    if process in self.starthandler.processes:
-                        print "Killing %s" % process
-                        self.starthandler.processes[process].kill()
-        except IOError:
-            pass
+        loadjobs(self.path, self.jobs)
+        managejobs(self.jobs, self.procs)
+
+
+def loadjobs(path, jobs):
+    '''
+    Load jobs from file
+    '''
+
+    with open(path) as fhl:
+        jobs[0] = yaml.load(fhl)
+
+
+def managejobs(jobs, procs):
+    '''
+    Start or stop jobs
+    '''
+
+    for job in jobs[0]:
+        if jobs[0][job]['operation'].lower() == 'start' and job not in procs:
+            print "Starting %s" % job
+            proc = subprocess.Popen(jobs[0][job]['commands'], shell=True)
+            procs[job] = proc
+        elif jobs[0][job]['operation'].lower() == 'stop' and job in procs:
+            print "Stopping %s" % job
+            procs[job].kill()
 
 
 def main():
@@ -87,40 +71,44 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description=__doc__,
                                      epilog=":set bkc=yes on Windows")
-    parser.add_argument('runtime', help="runtime directory")
+    parser.add_argument('path', help="path to job file")
     parser.add_argument('--sleep', type=int, help="loop sleep time in seconds",
                         default=60)
     args = parser.parse_args()
 
+    # Load jobs
+    path = os.path.abspath(args.path)
+    procs = {}
+    jobs = [{}]
+    loadjobs(path, jobs)
+    previousjobs = copy.deepcopy(jobs[0])
+    managejobs(jobs, procs)
+
     # Set up watchdog
-    starthandler = StartEventHandler()
-    killhandler = KillEventHandler(args.runtime, starthandler)
+    handler = EventHandler(path, jobs, procs)
     observer = watchdog.observers.Observer()
-    observer.schedule(starthandler, '%s/jobs' % args.runtime, recursive=True)
-    observer.schedule(killhandler, args.runtime)
+    observer.schedule(handler, os.path.dirname(path))
     observer.start()
 
     # Loop
     try:
-        previousprocesses = {}
-
         while True:
-            # Clean up processes
+            # Update processes
             toremove = []
-            for process in starthandler.processes:
-                polled = starthandler.processes[process].poll()
+            for process in procs:
+                polled = procs[process].poll()
                 if polled is not None:
                     print "Cleaning up %s which exited %d" % (process, polled)
+                    jobs[0][process]['operation'] = 'stop'
                     toremove.append(process)
             for process in toremove:
-                del starthandler.processes[process]
+                del procs[process]
 
-            # Write process file
-            if starthandler.processes != previousprocesses:
-                with open('%s/processes' % args.runtime, 'w') as fhl:
-                    for process in starthandler.processes:
-                        print >> fhl, process
-                previousprocesses = starthandler.processes.copy()
+            # Update job file
+            if jobs[0] != previousjobs:
+                with open(path, 'w') as fhl:
+                    yaml.dump(jobs[0], fhl, default_flow_style=False, indent=4)
+                    previousjobs = copy.deepcopy(jobs[0])
 
             time.sleep(args.sleep)
     except KeyboardInterrupt:
