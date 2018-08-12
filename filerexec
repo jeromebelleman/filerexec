@@ -3,6 +3,8 @@
 Remotely execute processes from files
 '''
 
+# FIXME Frequent writes
+
 import sys
 import time
 import argparse
@@ -49,23 +51,23 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description=__doc__,
                                      epilog=":set bkc=yes on Windows")
-    parser.add_argument('path')
+    parser.add_argument('runtime', help="runtime directory")
+    parser.add_argument('--sleep', type=int, help="loop sleep time in seconds",
+                        default=60)
     args = parser.parse_args()
 
     # Set up watchdog
     handler = EventHandler()
     observer = watchdog.observers.Observer()
-    observer.schedule(handler, args.path, recursive=True)
+    observer.schedule(handler, '%s/jobs' % args.runtime, recursive=True)
     observer.start()
 
     # Loop
     try:
         while True:
-            print "Running %d processes" % len(handler.processes)
-
             # Kill processes
             try:
-                with open('kill') as fhl:
+                with open('%s/kill' % args.runtime) as fhl:
                     for line in fhl:
                         process = line.strip()
                         if process in handler.processes:
@@ -77,17 +79,19 @@ def main():
             # Clean up processes
             toremove = []
             for process in handler.processes:
-                if handler.processes[process].poll() is not None:
-                    print "Finishing %s" % process
+                polled = handler.processes[process].poll()
+                if polled is not None:
+                    print "Cleaning up %s which exited %d" % (process, polled)
                     toremove.append(process)
             for process in toremove:
                 del handler.processes[process]
 
             # Write process file
-            with open('processes', 'w') as fhl:
+            with open('%s/processes' % args.runtime, 'w') as fhl:
                 for process in handler.processes:
                     print >> fhl, process
-            time.sleep(10)
+
+            time.sleep(args.sleep)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
