@@ -18,7 +18,7 @@ class EventHandler(watchdog.events.PatternMatchingEventHandler):
     Handle events
     '''
 
-    def __init__(self, path, jobs, procs):
+    def __init__(self, path, jobs, previousjobs, procs):
         '''
         Initialise event handler
         '''
@@ -27,6 +27,7 @@ class EventHandler(watchdog.events.PatternMatchingEventHandler):
                                            ignore_directories=True)
         self.path = path
         self.jobs = jobs
+        self.previousjobs = previousjobs
         self.procs = procs
 
 
@@ -35,17 +36,18 @@ class EventHandler(watchdog.events.PatternMatchingEventHandler):
         Manage jobs from file change
         '''
 
-        loadjobs(self.path, self.jobs)
+        loadjobs(self.path, self.jobs, self.previousjobs)
         managejobs(self.jobs, self.procs)
 
 
-def loadjobs(path, jobs):
+def loadjobs(path, jobs, previousjobs):
     '''
     Load jobs from file
     '''
 
     with open(path) as fhl:
         jobs[0] = yaml.load(fhl)
+        previousjobs[0] = copy.deepcopy(jobs[0])
 
 
 def managejobs(jobs, procs):
@@ -80,12 +82,12 @@ def main():
     path = os.path.abspath(args.path)
     procs = {}
     jobs = [{}]
-    loadjobs(path, jobs)
-    previousjobs = copy.deepcopy(jobs[0])
+    previousjobs = [{}]
+    loadjobs(path, jobs, previousjobs)
     managejobs(jobs, procs)
 
     # Set up watchdog
-    handler = EventHandler(path, jobs, procs)
+    handler = EventHandler(path, jobs, previousjobs, procs)
     observer = watchdog.observers.Observer()
     observer.schedule(handler, os.path.dirname(path))
     observer.start()
@@ -105,10 +107,10 @@ def main():
                 del procs[process]
 
             # Update job file
-            if jobs[0] != previousjobs:
+            if jobs != previousjobs:
                 with open(path, 'w') as fhl:
                     yaml.dump(jobs[0], fhl, default_flow_style=False, indent=4)
-                    previousjobs = copy.deepcopy(jobs[0])
+                    previousjobs[0] = copy.deepcopy(jobs[0])
 
             time.sleep(args.sleep)
     except KeyboardInterrupt:
