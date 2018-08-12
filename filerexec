@@ -1,0 +1,74 @@
+#! /usr/bin/env python
+
+import sys
+import time
+import argparse
+import subprocess
+import watchdog.observers
+import watchdog.events
+
+
+class EventHandler(watchdog.events.RegexMatchingEventHandler):
+    def __init__(self):
+        ignore = [
+            '.*/\..*',
+            '.*/\d+.*',
+        ]
+        super(EventHandler, self).__init__(ignore_regexes=ignore,
+                                           ignore_directories=True)
+        self.processes = {}
+
+
+    def on_modified(self, event):
+        if not event.src_path in self.processes:
+            print "Starting %s" % event.src_path
+            proc = subprocess.Popen(event.src_path, shell=True)
+            self.processes[event.src_path] = proc
+
+
+def main():
+    # Parse arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('path')
+    args = parser.parse_args()
+
+    # Set up watchdog
+    handler = EventHandler()
+    observer = watchdog.observers.Observer()
+    observer.schedule(handler, args.path, recursive=True)
+    observer.start()
+
+    # Loop
+    try:
+        while True:
+            print "Running %d processes" % len(handler.processes)
+
+            # Kill processes
+            with open('kill') as fhl:
+                for line in fhl:
+                    process = line.strip()
+                    if process in handler.processes:
+                        print "Killing %s" % process
+                        handler.processes[process].kill()
+
+            # Clean up processes
+            toremove = []
+            for process in handler.processes:
+                if handler.processes[process].poll() is not None:
+                    print "Finishing %s" % process
+                    toremove.append(process)
+            for process in toremove:
+                del handler.processes[process]
+
+            # Write process file
+            with open('processes', 'w') as fhl:
+                for process in handler.processes:
+                    print >> fhl, process
+            time.sleep(10)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
+
+
+if __name__ == '__main__':
+    sys.exit(main())
