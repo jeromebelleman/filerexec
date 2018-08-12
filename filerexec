@@ -12,12 +12,16 @@ import subprocess
 import watchdog.observers
 import watchdog.events
 
+KILL = [
+    r'.*kill$',
+]
+
 IGNORE = [
     r'.*/\..*',
     r'.*/\d+.*',
 ]
 
-class EventHandler(watchdog.events.RegexMatchingEventHandler):
+class StartEventHandler(watchdog.events.RegexMatchingEventHandler):
     '''
     Handle events
     '''
@@ -27,8 +31,8 @@ class EventHandler(watchdog.events.RegexMatchingEventHandler):
         Initialise event handler
         '''
 
-        super(EventHandler, self).__init__(ignore_regexes=IGNORE,
-                                           ignore_directories=True)
+        super(StartEventHandler, self).__init__(ignore_regexes=IGNORE,
+                                                ignore_directories=True)
         self.processes = {}
 
 
@@ -41,6 +45,38 @@ class EventHandler(watchdog.events.RegexMatchingEventHandler):
             print "Starting %s" % event.src_path
             proc = subprocess.Popen(event.src_path, shell=True)
             self.processes[event.src_path] = proc
+
+
+class KillEventHandler(watchdog.events.RegexMatchingEventHandler):
+    '''
+    Handle events
+    '''
+
+    def __init__(self, path, starthandler):
+        '''
+        Initialise event handler
+        '''
+
+        super(KillEventHandler, self).__init__(regexes=KILL,
+                                               ignore_directories=True)
+        self.path = path
+        self.starthandler = starthandler
+
+
+    def on_modified(self, event):
+        '''
+        Kill process from file change
+        '''
+
+        try:
+            with open('%s/kill' % self.path) as fhl:
+                for line in fhl:
+                    process = line.strip()
+                    if process in self.starthandler.processes:
+                        print "Killing %s" % process
+                        self.starthandler.processes[process].kill()
+        except IOError:
+            pass
 
 
 def main():
@@ -57,9 +93,11 @@ def main():
     args = parser.parse_args()
 
     # Set up watchdog
-    handler = EventHandler()
+    starthandler = StartEventHandler()
+    killhandler = KillEventHandler(args.runtime, starthandler)
     observer = watchdog.observers.Observer()
-    observer.schedule(handler, '%s/jobs' % args.runtime, recursive=True)
+    observer.schedule(starthandler, '%s/jobs' % args.runtime, recursive=True)
+    observer.schedule(killhandler, args.runtime)
     observer.start()
 
     # Loop
@@ -67,33 +105,22 @@ def main():
         previousprocesses = {}
 
         while True:
-            # Kill processes
-            try:
-                with open('%s/kill' % args.runtime) as fhl:
-                    for line in fhl:
-                        process = line.strip()
-                        if process in handler.processes:
-                            print "Killing %s" % process
-                            handler.processes[process].kill()
-            except IOError:
-                pass
-
             # Clean up processes
             toremove = []
-            for process in handler.processes:
-                polled = handler.processes[process].poll()
+            for process in starthandler.processes:
+                polled = starthandler.processes[process].poll()
                 if polled is not None:
                     print "Cleaning up %s which exited %d" % (process, polled)
                     toremove.append(process)
             for process in toremove:
-                del handler.processes[process]
+                del starthandler.processes[process]
 
             # Write process file
-            if handler.processes != previousprocesses:
+            if starthandler.processes != previousprocesses:
                 with open('%s/processes' % args.runtime, 'w') as fhl:
-                    for process in handler.processes:
+                    for process in starthandler.processes:
                         print >> fhl, process
-                previousprocesses = handler.processes.copy()
+                previousprocesses = starthandler.processes.copy()
 
             time.sleep(args.sleep)
     except KeyboardInterrupt:
