@@ -6,9 +6,11 @@ Remotely execute processes from files
 import os
 import sys
 import time
-import argparse
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import subprocess
 import copy
+import datetime
+import logging
 import yaml
 import watchdog.observers
 import watchdog.events
@@ -57,11 +59,11 @@ def managejobs(jobs, procs):
 
     for job in jobs[0]:
         if jobs[0][job]['operation'].lower() == 'start' and job not in procs:
-            print "Starting %s" % job
+            logging.info("Starting %s", job)
             proc = subprocess.Popen(jobs[0][job]['commands'], shell=True)
             procs[job] = proc
         elif jobs[0][job]['operation'].lower() == 'stop' and job in procs:
-            print "Stopping %s" % job
+            logging.info("Stopping %s", job)
             procs[job].kill()
 
 
@@ -71,36 +73,59 @@ def main():
     '''
 
     # Parse arguments
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     epilog=":set bkc=yes on Windows")
+    parser = ArgumentParser(description=__doc__,
+                            epilog=":set bkc=yes on Windows",
+                            formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('directory', help="path to runtime directory")
     parser.add_argument('--sleep', type=int, help="loop sleep time in seconds",
                         default=60)
+    parser.add_argument('--heartbeat', type=int, default=720,
+                        help="heartbeat frequency in minutes")
     args = parser.parse_args()
 
-    # Load jobs
     dry = os.path.abspath(args.directory)
+
+    # Set up logging
+    logging.basicConfig(filename=dry + '/filerexec.log',
+                        level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s",
+                        datefmt='%Y-%m-%d %H-%M')
+    logging.info("Starting filerexec: %s", args)
+
+    # Load jobs
     procs = {}
     jobs = [{}]
     previousjobs = [{}]
-    loadjobs(dry, jobs, previousjobs)
+    try:
+        loadjobs(dry, jobs, previousjobs)
+    except IOError, exc:
+        logging.error(exc)
+        logging.info("Stopping filerexec")
+        return 1
     managejobs(jobs, procs)
 
     # Set up watchdog
     handler = EventHandler(dry, jobs, previousjobs, procs)
     observer = watchdog.observers.Observer()
-    observer.schedule(handler, dry)
-    observer.start()
+    try:
+        observer.schedule(handler, dry)
+        observer.start()
+    except OSError, exc:
+        logging.error('%s: %s', dry, exc)
+        logging.info("Stopping filerexec")
+        return 1
 
     # Loop
     try:
+        heartbeat = datetime.datetime.now()
         while True:
             # Update processes
             toremove = []
             for process in procs:
                 polled = procs[process].poll()
                 if polled is not None:
-                    print "Cleaning up %s which exited %d" % (process, polled)
+                    logging.info("Cleaning up %s which exited %d",
+                                 process, polled)
                     jobs[0][process]['operation'] = 'stop'
                     toremove.append(process)
             for process in toremove:
@@ -112,10 +137,16 @@ def main():
                     yaml.dump(jobs[0], fhl, default_flow_style=False, indent=4)
                     previousjobs[0] = copy.deepcopy(jobs[0])
 
+            now = datetime.datetime.now()
+            if now - heartbeat > datetime.timedelta(minutes=args.heartbeat):
+                logging.info('Heartbeat')
+                heartbeat = now
+
             time.sleep(args.sleep)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
+    logging.info("Stopping filerexec")
 
 
 if __name__ == '__main__':
