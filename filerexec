@@ -11,6 +11,7 @@ import subprocess
 import copy
 import datetime
 import logging
+import signal
 import yaml
 import watchdog.observers
 import watchdog.events
@@ -58,13 +59,27 @@ def managejobs(jobs, procs):
     '''
 
     for job in jobs[0]:
-        if jobs[0][job]['operation'].lower() == 'start' and job not in procs:
-            logging.info("Starting %s", job)
-            proc = subprocess.Popen(jobs[0][job]['commands'], shell=True)
-            procs[job] = proc
-        elif jobs[0][job]['operation'].lower() == 'stop' and job in procs:
-            logging.info("Stopping %s", job)
-            procs[job].kill()
+        try:
+            if jobs[0][job]['operation'].lower() == 'start' and \
+                job not in procs:
+                logging.info("Starting %s", job)
+                proc = subprocess.Popen(jobs[0][job]['commands'], shell=True)
+                procs[job] = proc
+            elif jobs[0][job]['operation'].lower() == 'stop' and \
+                job in procs:
+                logging.info("Stopping %s", job)
+                procs[job].kill()
+        except KeyError, exc:
+            logging.warning('Missing key for %s: %s', job, exc)
+
+
+def termhandler(signum, frame): # pylint: disable=unused-argument
+    '''
+    Handle SIGTERM
+    '''
+
+    logging.info("Stopping filerexec")
+    sys.exit(0)
 
 
 def main():
@@ -91,6 +106,9 @@ def main():
                         format="%(asctime)s %(levelname)s %(message)s",
                         datefmt='%Y-%m-%d %H-%M')
     logging.info("Starting filerexec: %s", args)
+
+    # Catch SIGTERM
+    signal.signal(signal.SIGTERM, termhandler)
 
     # Load jobs
     procs = {}
