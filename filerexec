@@ -18,14 +18,14 @@ class EventHandler(watchdog.events.PatternMatchingEventHandler):
     Handle events
     '''
 
-    def __init__(self, path, jobs, previousjobs, procs):
+    def __init__(self, dry, jobs, previousjobs, procs):
         '''
         Initialise event handler
         '''
 
-        super(EventHandler, self).__init__(patterns=[path],
+        super(EventHandler, self).__init__(patterns=[dry + '/filerexec.yaml'],
                                            ignore_directories=True)
-        self.path = path
+        self.dry = dry
         self.jobs = jobs
         self.previousjobs = previousjobs
         self.procs = procs
@@ -36,16 +36,16 @@ class EventHandler(watchdog.events.PatternMatchingEventHandler):
         Manage jobs from file change
         '''
 
-        loadjobs(self.path, self.jobs, self.previousjobs)
+        loadjobs(self.dry, self.jobs, self.previousjobs)
         managejobs(self.jobs, self.procs)
 
 
-def loadjobs(path, jobs, previousjobs):
+def loadjobs(dry, jobs, previousjobs):
     '''
     Load jobs from file
     '''
 
-    with open(path) as fhl:
+    with open(dry + '/filerexec.yaml') as fhl:
         jobs[0] = yaml.load(fhl)
         previousjobs[0] = copy.deepcopy(jobs[0])
 
@@ -73,23 +73,23 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description=__doc__,
                                      epilog=":set bkc=yes on Windows")
-    parser.add_argument('path', help="path to job file")
+    parser.add_argument('directory', help="path to runtime directory")
     parser.add_argument('--sleep', type=int, help="loop sleep time in seconds",
                         default=60)
     args = parser.parse_args()
 
     # Load jobs
-    path = os.path.abspath(args.path)
+    dry = os.path.abspath(args.directory)
     procs = {}
     jobs = [{}]
     previousjobs = [{}]
-    loadjobs(path, jobs, previousjobs)
+    loadjobs(dry, jobs, previousjobs)
     managejobs(jobs, procs)
 
     # Set up watchdog
-    handler = EventHandler(path, jobs, previousjobs, procs)
+    handler = EventHandler(dry, jobs, previousjobs, procs)
     observer = watchdog.observers.Observer()
-    observer.schedule(handler, os.path.dirname(path))
+    observer.schedule(handler, dry)
     observer.start()
 
     # Loop
@@ -108,7 +108,7 @@ def main():
 
             # Update job file
             if jobs != previousjobs:
-                with open(path, 'w') as fhl:
+                with open(dry + '/filerexec.yaml', 'w') as fhl:
                     yaml.dump(jobs[0], fhl, default_flow_style=False, indent=4)
                     previousjobs[0] = copy.deepcopy(jobs[0])
 
