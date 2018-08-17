@@ -58,7 +58,7 @@ def managejobs(dry, jobs, previousjobs, procs):
         try:
             if jobs[0][job]['operation'].lower() == 'start' and \
                 job not in procs:
-                logging.info("Starting %s", job)
+                logging.info("Starting %s: %s", job, jobs[0][job]['commands'])
                 if 'stdout' in jobs[0][job] and jobs[0][job]['stdout']:
                     stdout = subprocess.PIPE
                 else:
