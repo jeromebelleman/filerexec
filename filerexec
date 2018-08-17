@@ -47,9 +47,12 @@ def managejobs(dry, jobs, previousjobs, procs):
     Start or stop jobs
     '''
 
-    with open(dry + '/filerexec.yaml') as fhl:
-        jobs[0] = yaml.load(fhl)
-        previousjobs[0] = copy.deepcopy(jobs[0])
+    try:
+        with open(dry + '/filerexec.yaml') as fhl:
+            jobs[0] = yaml.load(fhl)
+            previousjobs[0] = copy.deepcopy(jobs[0])
+    except (IOError, yaml.YAMLError), exc:
+        logging.warning(exc)
 
     for job in jobs[0]:
         try:
@@ -109,12 +112,7 @@ def main():
     procs = {}
     jobs = [{}]
     previousjobs = [{}]
-    try:
-        managejobs(dry, jobs, previousjobs, procs)
-    except IOError, exc:
-        logging.error(exc)
-        logging.info("Stopping filerexec")
-        return 1
+    managejobs(dry, jobs, previousjobs, procs)
 
     # Set up watchdog
     handler = EventHandler(dry, jobs, previousjobs, procs)
