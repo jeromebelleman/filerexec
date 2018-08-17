@@ -59,7 +59,18 @@ def managejobs(dry, jobs, previousjobs, procs):
             if jobs[0][job]['operation'].lower() == 'start' and \
                 job not in procs:
                 logging.info("Starting %s", job)
-                proc = subprocess.Popen(jobs[0][job]['commands'], shell=True)
+                if 'stdout' in jobs[0][job] and jobs[0][job]['stdout']:
+                    stdout = subprocess.PIPE
+                else:
+                    stdout = None
+                if 'stderr' in jobs[0][job] and jobs[0][job]['stderr']:
+                    stderr = subprocess.PIPE
+                else:
+                    stderr = None
+                proc = subprocess.Popen(jobs[0][job]['commands'],
+                                        stdout=stdout,
+                                        stderr=stderr,
+                                        shell=True)
                 procs[job] = proc
             elif jobs[0][job]['operation'].lower() == 'stop' and \
                 job in procs:
@@ -76,6 +87,29 @@ def termhandler(signum, frame): # pylint: disable=unused-argument
 
     logging.info("Stopping filerexec")
     sys.exit(0)
+
+
+def update(procs, jobs):
+    '''
+    Update processes
+    '''
+
+    toremove = []
+    for process in procs:
+        polled = procs[process].poll()
+        if polled is not None:
+            if procs[process].stdout:
+                for line in procs[process].stdout:
+                    logging.info("%s: %s", process, line.strip())
+            if procs[process].stderr:
+                for line in procs[process].stderr:
+                    logging.warning("%s: %s", process, line.strip())
+            logging.info("Cleaning up %s which exited %d",
+                         process, polled)
+            jobs[0][process]['operation'] = 'stop'
+            toremove.append(process)
+    for process in toremove:
+        del procs[process]
 
 
 def main():
@@ -130,17 +164,7 @@ def main():
         heartbeat = datetime.datetime.now()
         periodic = datetime.datetime.now()
         while True:
-            # Update processes
-            toremove = []
-            for process in procs:
-                polled = procs[process].poll()
-                if polled is not None:
-                    logging.info("Cleaning up %s which exited %d",
-                                 process, polled)
-                    jobs[0][process]['operation'] = 'stop'
-                    toremove.append(process)
-            for process in toremove:
-                del procs[process]
+            update(procs, jobs)
 
             # Update job file
             if jobs != previousjobs:
