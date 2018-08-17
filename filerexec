@@ -34,29 +34,22 @@ class EventHandler(watchdog.events.PatternMatchingEventHandler):
         self.procs = procs
 
 
-    def on_modified(self, event):
+    def on_any_event(self, event):
         '''
         Manage jobs from file change
         '''
 
-        loadjobs(self.dry, self.jobs, self.previousjobs)
-        managejobs(self.jobs, self.procs)
+        managejobs(self.dry, self.jobs, self.previousjobs, self.procs)
 
 
-def loadjobs(dry, jobs, previousjobs):
+def managejobs(dry, jobs, previousjobs, procs):
     '''
-    Load jobs from file
+    Start or stop jobs
     '''
 
     with open(dry + '/filerexec.yaml') as fhl:
         jobs[0] = yaml.load(fhl)
         previousjobs[0] = copy.deepcopy(jobs[0])
-
-
-def managejobs(jobs, procs):
-    '''
-    Start or stop jobs
-    '''
 
     for job in jobs[0]:
         try:
@@ -95,7 +88,9 @@ def main():
     parser.add_argument('--sleep', type=int, help="loop sleep time in seconds",
                         default=60)
     parser.add_argument('--heartbeat', type=int, default=720,
-                        help="heartbeat frequency in minutes")
+                        help="heartbeat interval in minutes")
+    msg = "periodic job management interval in minutes, if watchdog fails"
+    parser.add_argument('--periodic', type=int, default=30, help=msg)
     args = parser.parse_args()
 
     dry = os.path.abspath(args.directory)
@@ -115,12 +110,11 @@ def main():
     jobs = [{}]
     previousjobs = [{}]
     try:
-        loadjobs(dry, jobs, previousjobs)
+        managejobs(dry, jobs, previousjobs, procs)
     except IOError, exc:
         logging.error(exc)
         logging.info("Stopping filerexec")
         return 1
-    managejobs(jobs, procs)
 
     # Set up watchdog
     handler = EventHandler(dry, jobs, previousjobs, procs)
@@ -136,6 +130,7 @@ def main():
     # Loop
     try:
         heartbeat = datetime.datetime.now()
+        periodic = datetime.datetime.now()
         while True:
             # Update processes
             toremove = []
@@ -159,6 +154,10 @@ def main():
             if now - heartbeat > datetime.timedelta(minutes=args.heartbeat):
                 logging.info('Heartbeat')
                 heartbeat = now
+
+            if now - periodic > datetime.timedelta(minutes=args.periodic):
+                managejobs(dry, jobs, previousjobs, procs)
+                periodic = now
 
             time.sleep(args.sleep)
     except KeyboardInterrupt:
